@@ -49,6 +49,12 @@
 #define BOARD_RAMPS_PLUS_EEF   146    // RAMPS Plus 3DYMY (Power outputs: Hotend0, Hotend1, Fan)
 #define BOARD_RAMPS_PLUS_SF    148    // RAMPS Plus 3DYMY (Power outputs: Spindle, Controller Fan)
 
+#define BOARD_RAMPS_PLUS2_EFB  243    // RAMPS Plus2 3DYMY (Power outputs: Hotend, Fan, Bed)
+#define BOARD_RAMPS_PLUS2_EEB  244    // RAMPS Plus2 3DYMY (Power outputs: Hotend0, Hotend1, Bed)
+#define BOARD_RAMPS_PLUS2_EFF  245    // RAMPS Plus2 3DYMY (Power outputs: Hotend, Fan0, Fan1)
+#define BOARD_RAMPS_PLUS2_EEF  246    // RAMPS Plus2 3DYMY (Power outputs: Hotend0, Hotend1, Fan)
+#define BOARD_RAMPS_PLUS2_SF   248    // RAMPS Plus2 3DYMY (Power outputs: Spindle, Controller Fan)
+
 //
 // RAMPS Derivatives - ATmega1280, ATmega2560
 //
