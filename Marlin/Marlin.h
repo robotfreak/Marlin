@@ -29,7 +29,6 @@
 #include <inttypes.h>
 
 #include <util/delay.h>
-#include <avr/pgmspace.h>
 #include <avr/eeprom.h>
 #include <avr/interrupt.h>
 
@@ -58,6 +57,8 @@ void idle(
 );
 
 void manage_inactivity(bool ignore_stepper_queue = false);
+
+extern const char axis_codes[XYZE];
 
 #if ENABLED(DUAL_X_CARRIAGE) || ENABLED(DUAL_NOZZLE_DUPLICATION_MODE)
   extern bool extruder_duplication_enabled;
@@ -175,8 +176,19 @@ void manage_inactivity(bool ignore_stepper_queue = false);
 #define _AXIS(AXIS) AXIS ##_AXIS
 
 void enable_all_steppers();
+void disable_e_stepper(const uint8_t e);
 void disable_e_steppers();
 void disable_all_steppers();
+
+void sync_plan_position();
+void sync_plan_position_e();
+
+#if IS_KINEMATIC
+  void sync_plan_position_kinematic();
+  #define SYNC_PLAN_POSITION_KINEMATIC() sync_plan_position_kinematic()
+#else
+  #define SYNC_PLAN_POSITION_KINEMATIC() sync_plan_position()
+#endif
 
 void FlushSerialRequestResend();
 void ok_to_send();
@@ -200,16 +212,23 @@ bool enqueue_and_echo_command(const char* cmd, bool say_ok=false); // Add a sing
 void enqueue_and_echo_commands_P(const char * const cmd);          // Set one or more commands to be prioritized over the next Serial/SD command.
 void clear_command_queue();
 
+#define HAS_LCD_QUEUE_NOW (ENABLED(ULTIPANEL) && (ENABLED(AUTO_BED_LEVELING_UBL) || ENABLED(PID_AUTOTUNE_MENU) || ENABLED(ADVANCED_PAUSE_FEATURE)))
+#define HAS_QUEUE_NOW (ENABLED(SDSUPPORT) || HAS_LCD_QUEUE_NOW)
+#if HAS_QUEUE_NOW
+  // Return only when commands are actually enqueued
+  void enqueue_and_echo_command_now(const char* cmd, bool say_ok=false);
+  #if HAS_LCD_QUEUE_NOW
+    void enqueue_and_echo_commands_P_now(const char * const cmd);
+  #endif
+#endif
+
 extern millis_t previous_cmd_ms;
 inline void refresh_cmd_timeout() { previous_cmd_ms = millis(); }
-
-#if ENABLED(FAST_PWM_FAN)
-  void setPwmFrequency(uint8_t pin, int val);
-#endif
 
 /**
  * Feedrate scaling and conversion
  */
+extern float feedrate_mm_s;
 extern int16_t feedrate_percentage;
 
 #define MMS_SCALED(MM_S) ((MM_S)*feedrate_percentage*0.01)
@@ -225,7 +244,9 @@ extern volatile bool wait_for_heatup;
 
 extern float current_position[XYZE], destination[XYZE];
 
-// Workspace offsets
+/**
+ * Workspace offsets
+ */
 #if HAS_WORKSPACE_OFFSET
   #if HAS_HOME_OFFSET
     extern float home_offset[XYZ];
@@ -233,36 +254,26 @@ extern float current_position[XYZE], destination[XYZE];
   #if HAS_POSITION_SHIFT
     extern float position_shift[XYZ];
   #endif
-#endif
-
-#if HAS_HOME_OFFSET && HAS_POSITION_SHIFT
-  extern float workspace_offset[XYZ];
-  #define WORKSPACE_OFFSET(AXIS) workspace_offset[AXIS]
-#elif HAS_HOME_OFFSET
-  #define WORKSPACE_OFFSET(AXIS) home_offset[AXIS]
-#elif HAS_POSITION_SHIFT
-  #define WORKSPACE_OFFSET(AXIS) position_shift[AXIS]
+  #if HAS_HOME_OFFSET && HAS_POSITION_SHIFT
+    extern float workspace_offset[XYZ];
+    #define WORKSPACE_OFFSET(AXIS) workspace_offset[AXIS]
+  #elif HAS_HOME_OFFSET
+    #define WORKSPACE_OFFSET(AXIS) home_offset[AXIS]
+  #elif HAS_POSITION_SHIFT
+    #define WORKSPACE_OFFSET(AXIS) position_shift[AXIS]
+  #endif
+  #define NATIVE_TO_LOGICAL(POS, AXIS) ((POS) + WORKSPACE_OFFSET(AXIS))
+  #define LOGICAL_TO_NATIVE(POS, AXIS) ((POS) - WORKSPACE_OFFSET(AXIS))
 #else
-  #define WORKSPACE_OFFSET(AXIS) 0
+  #define NATIVE_TO_LOGICAL(POS, AXIS) (POS)
+  #define LOGICAL_TO_NATIVE(POS, AXIS) (POS)
 #endif
-
-#define NATIVE_TO_LOGICAL(POS, AXIS) ((POS) + WORKSPACE_OFFSET(AXIS))
-#define LOGICAL_TO_NATIVE(POS, AXIS) ((POS) - WORKSPACE_OFFSET(AXIS))
-
-#if HAS_POSITION_SHIFT || DISABLED(DELTA)
-  #define LOGICAL_X_POSITION(POS)   NATIVE_TO_LOGICAL(POS, X_AXIS)
-  #define LOGICAL_Y_POSITION(POS)   NATIVE_TO_LOGICAL(POS, Y_AXIS)
-  #define RAW_X_POSITION(POS)       LOGICAL_TO_NATIVE(POS, X_AXIS)
-  #define RAW_Y_POSITION(POS)       LOGICAL_TO_NATIVE(POS, Y_AXIS)
-#else
-  #define LOGICAL_X_POSITION(POS)   (POS)
-  #define LOGICAL_Y_POSITION(POS)   (POS)
-  #define RAW_X_POSITION(POS)       (POS)
-  #define RAW_Y_POSITION(POS)       (POS)
-#endif
-
-#define LOGICAL_Z_POSITION(POS)     NATIVE_TO_LOGICAL(POS, Z_AXIS)
-#define RAW_Z_POSITION(POS)         LOGICAL_TO_NATIVE(POS, Z_AXIS)
+#define LOGICAL_X_POSITION(POS) NATIVE_TO_LOGICAL(POS, X_AXIS)
+#define LOGICAL_Y_POSITION(POS) NATIVE_TO_LOGICAL(POS, Y_AXIS)
+#define LOGICAL_Z_POSITION(POS) NATIVE_TO_LOGICAL(POS, Z_AXIS)
+#define RAW_X_POSITION(POS)     LOGICAL_TO_NATIVE(POS, X_AXIS)
+#define RAW_Y_POSITION(POS)     LOGICAL_TO_NATIVE(POS, Y_AXIS)
+#define RAW_Z_POSITION(POS)     LOGICAL_TO_NATIVE(POS, Z_AXIS)
 
 // Hotend Offsets
 #if HOTENDS > 1
@@ -284,8 +295,8 @@ extern float soft_endstop_min[XYZ], soft_endstop_max[XYZ];
   void update_software_endstops(const AxisEnum axis);
 #endif
 
+#define MAX_COORDINATE_SYSTEMS 9
 #if ENABLED(CNC_COORDINATE_SYSTEMS)
-  #define MAX_COORDINATE_SYSTEMS 9
   extern float coordinate_system[MAX_COORDINATE_SYSTEMS][XYZ];
   bool select_coordinate_system(const int8_t _new);
 #endif
@@ -320,17 +331,17 @@ void report_current_position();
   #endif
 
   // Macro to obtain the Z position of an individual tower
-  #define DELTA_Z(T) raw[Z_AXIS] + _SQRT(     \
-    delta_diagonal_rod_2_tower[T] - HYPOT2(   \
-        delta_tower[T][X_AXIS] - raw[X_AXIS], \
-        delta_tower[T][Y_AXIS] - raw[Y_AXIS]  \
-      )                                       \
+  #define DELTA_Z(V,T) V[Z_AXIS] + _SQRT(   \
+    delta_diagonal_rod_2_tower[T] - HYPOT2( \
+        delta_tower[T][X_AXIS] - V[X_AXIS], \
+        delta_tower[T][Y_AXIS] - V[Y_AXIS]  \
+      )                                     \
     )
 
-  #define DELTA_RAW_IK() do {        \
-    delta[A_AXIS] = DELTA_Z(A_AXIS); \
-    delta[B_AXIS] = DELTA_Z(B_AXIS); \
-    delta[C_AXIS] = DELTA_Z(C_AXIS); \
+  #define DELTA_IK(V) do {        \
+    delta[A_AXIS] = DELTA_Z(V, A_AXIS); \
+    delta[B_AXIS] = DELTA_Z(V, B_AXIS); \
+    delta[C_AXIS] = DELTA_Z(V, C_AXIS); \
   }while(0)
 
 #elif IS_SCARA
@@ -361,6 +372,11 @@ void report_current_position();
   float bilinear_z_offset(const float raw[XYZ]);
 #endif
 
+#if ENABLED(AUTO_BED_LEVELING_BILINEAR) || ENABLED(MESH_BED_LEVELING)
+  typedef float (*element_2d_fn)(const uint8_t, const uint8_t);
+  void print_2d_array(const uint8_t sx, const uint8_t sy, const uint8_t precision, const element_2d_fn fn);
+#endif
+
 #if ENABLED(AUTO_BED_LEVELING_UBL)
   typedef struct { double A, B, D; } linear_fit;
   linear_fit* lsf_linear_fit(double x[], double y[], double z[], const int);
@@ -388,6 +404,7 @@ void report_current_position();
 
 #if HAS_BED_PROBE
   extern float zprobe_zoffset;
+  bool set_probe_deployed(const bool deploy);
   #define DEPLOY_PROBE() set_probe_deployed(true)
   #define STOW_PROBE() set_probe_deployed(false)
 #else
@@ -414,6 +431,10 @@ void report_current_position();
   #endif
 #endif
 
+#if ENABLED(USE_CONTROLLER_FAN)
+  extern int controllerFanSpeed;
+#endif
+
 #if ENABLED(BARICUDA)
   extern uint8_t baricuda_valve_pressure, baricuda_e_to_p_pressure;
 #endif
@@ -422,29 +443,20 @@ void report_current_position();
   extern bool filament_sensor;         // Flag that filament sensor readings should control extrusion
   extern float filament_width_nominal, // Theoretical filament diameter i.e., 3.00 or 1.75
                filament_width_meas;    // Measured filament diameter
-  extern uint8_t meas_delay_cm,        // Delay distance
-                 measurement_delay[];  // Ring buffer to delay measurement
-  extern int8_t filwidth_delay_index[2]; // Ring buffer indexes. Used by planner, temperature, and main code
+  extern uint8_t meas_delay_cm;        // Delay distance
+  extern int8_t measurement_delay[MAX_MEASUREMENT_DELAY + 1],  // Ring buffer to delay measurement
+                filwidth_delay_index[2]; // Ring buffer indexes. Used by planner, temperature, and main code
 #endif
 
 #if ENABLED(ADVANCED_PAUSE_FEATURE)
+  extern int8_t did_pause_print;
   extern AdvancedPauseMenuResponse advanced_pause_menu_response;
+  extern float filament_change_unload_length[EXTRUDERS],
+               filament_change_load_length[EXTRUDERS];
 #endif
 
 #if ENABLED(PID_EXTRUSION_SCALING)
   extern int lpq_len;
-#endif
-
-#if ENABLED(FWRETRACT)
-  extern bool autoretract_enabled;                 // M209 S - Autoretract switch
-  extern float retract_length,                     // M207 S - G10 Retract length
-               retract_feedrate_mm_s,              // M207 F - G10 Retract feedrate
-               retract_zlift,                      // M207 Z - G10 Retract hop size
-               retract_recover_length,             // M208 S - G11 Recover length
-               retract_recover_feedrate_mm_s,      // M208 F - G11 Recover feedrate
-               swap_retract_length,                // M207 W - G10 Swap Retract length
-               swap_retract_recover_length,        // M208 W - G11 Swap Recover length
-               swap_retract_recover_feedrate_mm_s; // M208 R - G11 Swap Recover feedrate
 #endif
 
 // Print job timer
@@ -460,6 +472,10 @@ extern uint8_t active_extruder;
 #if ENABLED(MIXING_EXTRUDER)
   extern float mixing_factor[MIXING_STEPPERS];
 #endif
+
+inline void set_current_from_destination() { COPY(current_position, destination); }
+inline void set_destination_from_current() { COPY(destination, current_position); }
+void prepare_move_to_destination();
 
 /**
  * Blocking movement and shorthand functions
